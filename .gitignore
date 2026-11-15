@@ -1,0 +1,8 @@
+.DS_Store
+.build/
+build/
+*.xcodeproj
+xcuserdata/
+# Private working notes (not part of the public repo)
+References/
+docs/
