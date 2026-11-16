@@ -62,8 +62,14 @@ enum MissionControl {
         }
     }
 
+    private static func isSystemProcess(_ pid: pid_t) -> Bool {
+        var buf = [CChar](repeating: 0, count: 4096)
+        guard proc_pidpath(pid, &buf, UInt32(buf.count)) > 0 else { return false }
+        return String(cString: buf).hasPrefix("/System/")
+    }
+
     private static func describe(_ el: AXUIElement) -> String {
-        "\(AX.string(el, kAXRoleAttribute) ?? "?") id=\(AX.string(el, kAXIdentifierAttribute) ?? "") title=\(AX.string(el, kAXTitleAttribute) ?? "") frame=\(AX.frame(el).map { "\($0)" } ?? "-")"
+        "\(AX.string(el, kAXRoleAttribute) ?? "?") id=\(AX.string(el, kAXIdentifierAttribute) ?? "") frame=\(AX.frame(el).map { "\($0)" } ?? "-")"
     }
 
     /// While Mission Control is open, a system-wide accessibility hit-test at the
@@ -78,16 +84,25 @@ enum MissionControl {
         guard r == .success, var el = hit else { note("hit-test failed (\(r.rawValue))"); return nil }
 
         var thumb: AXUIElement?
+        var ident = ""
         for _ in 0..<6 {
-            if AX.string(el, kAXIdentifierAttribute)?.contains(".space.") == true { thumb = el; break }
+            if let id = AX.string(el, kAXIdentifierAttribute), id.contains(".space.") { thumb = el; ident = id; break }
             guard let p = AX.parent(el) else { break }
             el = p
         }
         guard let thumb else { note("no thumbnail under cursor; hit \(describe(hit!))"); return nil }
-        note("thumbnail \(describe(thumb))")
+        var ownerPID: pid_t = 0
+        AXUIElementGetPid(thumb, &ownerPID)
+        note("thumbnail \(describe(thumb)) ownerPID=\(ownerPID) dockPID=\(dockPID.map { String($0) } ?? "-")")
+        // On macOS 27 the thumbnails belong to WindowManager, not the Dock, so accept
+        // any element owned by a program inside /System/ and reject third-party owners.
+        guard ownerPID > 0, isSystemProcess(ownerPID) else {
+            note("thumbnail owner \(ownerPID) is not a system process; ignored")
+            return nil
+        }
 
-        let ident = AX.string(thumb, kAXIdentifierAttribute) ?? ""
-        let bundleID = String(ident[..<ident.range(of: ".space.")!.lowerBound])
+        guard let sep = ident.range(of: ".space.") else { return nil }
+        let bundleID = String(ident[..<sep.lowerBound])
         let title = AX.string(thumb, kAXTitleAttribute) ?? ""
         let thumbFrame = AX.frame(thumb)
         let pids = Set(NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).map { $0.processIdentifier })
@@ -111,7 +126,7 @@ enum MissionControl {
         }), let id = best[kCGWindowNumber as String] as? UInt32,
               let ownerPID = best[kCGWindowOwnerPID as String] as? pid_t,
               let app = NSRunningApplication(processIdentifier: ownerPID) else {
-            note("no real window matched \(bundleID) '\(title)' (\(candidates.count) candidates)")
+            note("no real window matched \(bundleID) (\(candidates.count) candidates)")
             return nil
         }
         return TargetWindow(app: app, windowID: id, title: title, thumbnailFrame: thumbFrame)
@@ -125,8 +140,7 @@ enum MissionControl {
             let role = AX.string(el, kAXRoleAttribute) ?? "?"
             let sub = AX.string(el, kAXSubroleAttribute) ?? ""
             let id = AX.string(el, kAXIdentifierAttribute) ?? ""
-            let title = AX.string(el, kAXTitleAttribute) ?? ""
-            Log.write("  diag: " + String(repeating: ".", count: depth) + "\(role) sub=\(sub) id=\(id) title=\(title)")
+            Log.write("  diag: " + String(repeating: ".", count: depth) + "\(role) sub=\(sub) id=\(id)")
             for c in AX.children(el).prefix(12) { walk(c, depth + 1) }
         }
         walk(AXUIElementCreateApplication(pid), 0)

@@ -6,7 +6,6 @@ import ExposePlusCore
 /// only while Mission Control is showing and the cursor is over a window thumbnail.
 final class HotKeyTap {
     private var tap: CFMachPort?
-    private var lastDiag = Date.distantPast
 
     @discardableResult
     func start() -> Bool {
@@ -39,15 +38,13 @@ final class HotKeyTap {
         guard let id = Preferences.shared.shortcutMap.actionID(keyCode: code, modifiers: modifiers),
               let action = HotKeyAction(rawValue: id),
               Preferences.shared.isEnabled(action) else { return pass }
-        Log.write("key \(code) -> \(action.rawValue)")
         guard MissionControl.isActive() else {
-            Log.write("  Mission Control not detected (Dock has no 'mc' child)")
-            let now = Date()
-            if now.timeIntervalSince(lastDiag) > 10 { lastDiag = now; MissionControl.logDiagnostics() }
+            // Outside Mission Control nothing is logged: bound keys (W, X, M, H, Q) are ordinary typing.
             return pass
         }
+        Log.write("key \(code) -> \(action.rawValue)")
         guard let target = MissionControl.windowUnderCursor(log: true) else { Log.write("  no window resolved under cursor"); return pass }
-        Log.write("  target: \(target.app.localizedName ?? "?") window \(target.windowID) '\(target.title)'")
+        Log.write("  target: \(target.app.localizedName ?? "?") window \(target.windowID)")
 
         // Swallow key repeats so holding the key doesn't act on the next window.
         if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 {
